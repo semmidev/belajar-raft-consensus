@@ -4,6 +4,18 @@ Repositori ini berisi implementasi *distributed replicated key-value store* meng
 
 ---
 
+## Dashboard UI
+
+Monitoring dashboard real-time untuk memantau status cluster, topologi node, dan operasi key-value store — dibangun dengan Go HTML template.
+
+| Cluster Topology & Node Status | KV Operations & Console Log |
+|:---:|:---:|
+| ![Cluster topology view showing 5 nodes with Leader highlighted in clay orange](templates/SCR-20260908-1.png) | ![KV operations panel showing SET, GET forms and console activity log](templates/SCR-20260908-2.png) |
+
+> Dashboard dapat diakses di `http://localhost:808{1-5}` setelah cluster berjalan.
+
+---
+
 ## 1. Konsep Inti Algoritma Raft
 
 Raft adalah algoritma konsensus yang dirancang agar mudah dipahami (*understandable*) guna mengelola replikasi log pada sistem terdistribusi.

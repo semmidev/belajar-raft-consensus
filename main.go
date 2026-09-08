@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
@@ -32,8 +31,6 @@ var indexTmpl = template.Must(template.ParseFS(templateFS, "templates/index.html
 // ==========================================
 
 // Command merepresentasikan struktur payload JSON yang akan disimpan ke dalam Raft Log.
-// Setiap mutasi/penulisan data (seperti SET atau DELETE) harus dibungkus dalam Command ini
-// agar bisa direplikasi dan disinkronkan ke seluruh node dalam cluster Raft.
 type Command struct {
 	Op    string `json:"op"`    // Jenis operasi mutasi data: "SET" atau "DELETE"
 	Key   string `json:"key"`   // Kunci data yang ingin disimpan/dihapus
@@ -44,22 +41,17 @@ type Command struct {
 // 2. FSM (FINITE STATE MACHINE) IMPLEMENTASI
 // ==========================================
 
-// KVStoreFSM adalah implementasi interface raft.FSM.
-// FSM bertanggung jawab menyimpan status (state) aplikasi aktual di dalam memori.
 type KVStoreFSM struct {
-	mu   sync.RWMutex      // Mutex untuk menjamin thread-safety akses map dari multiple goroutines
+	mu   sync.RWMutex      // Mutex untuk menjamin thread-safety akses map
 	data map[string]string // Key-Value storage in-memory
 }
 
-// NewKVStoreFSM membuat instance FSM baru dengan map yang sudah diinisialisasi.
 func NewKVStoreFSM() *KVStoreFSM {
 	return &KVStoreFSM{
 		data: make(map[string]string),
 	}
 }
 
-// Apply dipanggil secara Otomatis oleh Raft Engine ketika sebuah log transaksi telah
-// mencapai Konsensus Mayoritas (Committed) di dalam cluster.
 func (f *KVStoreFSM) Apply(l *raft.Log) interface{} {
 	var c Command
 	if err := json.Unmarshal(l.Data, &c); err != nil {
@@ -84,7 +76,6 @@ func (f *KVStoreFSM) Apply(l *raft.Log) interface{} {
 	}
 }
 
-// Get membaca nilai dari state FSM lokal secara thread-safe.
 func (f *KVStoreFSM) Get(key string) (string, bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -92,7 +83,6 @@ func (f *KVStoreFSM) Get(key string) (string, bool) {
 	return val, ok
 }
 
-// GetAll mengambil seluruh entri key-value dari state FSM lokal secara thread-safe.
 func (f *KVStoreFSM) GetAll() map[string]string {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -103,7 +93,6 @@ func (f *KVStoreFSM) GetAll() map[string]string {
 	return res
 }
 
-// Snapshot dipanggil oleh Raft engine untuk membuat salinan (point-in-time snapshot) dari FSM.
 func (f *KVStoreFSM) Snapshot() (raft.FSMSnapshot, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -115,7 +104,6 @@ func (f *KVStoreFSM) Snapshot() (raft.FSMSnapshot, error) {
 	return &fsmSnapshot{data: clone}, nil
 }
 
-// Restore memulihkan state FSM dari sebuah snapshot.
 func (f *KVStoreFSM) Restore(rc io.ReadCloser) error {
 	defer rc.Close()
 	var d map[string]string
@@ -158,14 +146,12 @@ func (s *fsmSnapshot) Release() {}
 // 3. HTTP API SERVER HANDLER & UI DASHBOARD
 // ==========================================
 
-// HTTPServer mengelola UI Dashboard & REST API untuk interaksi pengguna.
 type HTTPServer struct {
 	raft   *raft.Raft  // Instance Raft Engine node ini
 	fsm    *KVStoreFSM // Reference ke FSM lokal
 	nodeID string      // Identifier unik node (misal: "node1")
 }
 
-// handleDashboard me-render UI HTML Dashboard Tailwind CSS.
 func (s *HTTPServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -178,7 +164,6 @@ func (s *HTTPServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	_ = indexTmpl.Execute(w, data)
 }
 
-// handleStatus mengembalikan status & metadata operasional node saat ini dalam format JSON.
 func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -195,7 +180,6 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
-// handleClusterStatus mengumpulkan status 5 node secara simultan untuk UI real-time topology map.
 func (s *HTTPServer) handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -236,7 +220,6 @@ func (s *HTTPServer) handleClusterStatus(w http.ResponseWriter, r *http.Request)
 		go func(id, intURL, extURL string) {
 			defer wg.Done()
 
-			// Jika node yang diperiksa adalah node ini sendiri, ambil langsung dari s.raft
 			if id == s.nodeID {
 				mu.Lock()
 				resultMap[id] = nodeInfo{
@@ -249,12 +232,10 @@ func (s *HTTPServer) handleClusterStatus(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Coba panggil URL internal (dalam jaringan container) terlebih dahulu
 			var res *http.Response
 			var err error
 			res, err = client.Get(intURL)
 			if err != nil {
-				// Fallback ke URL external
 				res, err = client.Get(extURL)
 			}
 
@@ -300,7 +281,6 @@ func (s *HTTPServer) handleClusterStatus(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// handleGet membaca data berdasarkan param 'key' dari FSM lokal.
 func (s *HTTPServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -320,17 +300,14 @@ func (s *HTTPServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"key": key, "value": val})
 }
 
-// handleGetAll mengembalikan seluruh entri KV yang tersimpan di FSM.
 func (s *HTTPServer) handleGetAll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.fsm.GetAll())
 }
 
-// handleSet menerima request penulisan data (SET key-value).
 func (s *HTTPServer) handleSet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Decode body JSON request
 	var req struct {
 		Key   string `json:"key"`
 		Value string `json:"value"`
@@ -341,13 +318,11 @@ func (s *HTTPServer) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Jika node ini bukan Leader, teruskan (proxy) request ke Leader
 	if s.raft.State() != raft.Leader {
 		s.proxyToLeader(w, r, "SET", req.Key, req.Value)
 		return
 	}
 
-	// Submit perubahan ke log Raft
 	cmd := Command{Op: "SET", Key: req.Key, Value: req.Value}
 	data, err := json.Marshal(cmd)
 	if err != nil {
@@ -379,7 +354,6 @@ func (s *HTTPServer) handleSet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDelete menerima request penghapusan data (DELETE key).
 func (s *HTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -421,7 +395,6 @@ func (s *HTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// proxyToLeader meneruskan request mutasi (SET/DELETE) ke Leader jika node saat ini adalah Follower.
 func (s *HTTPServer) proxyToLeader(w http.ResponseWriter, r *http.Request, op, key, value string) {
 	_, leaderID := s.raft.LeaderWithID()
 	if leaderID == "" {
@@ -433,7 +406,6 @@ func (s *HTTPServer) proxyToLeader(w http.ResponseWriter, r *http.Request, op, k
 		return
 	}
 
-	// Map leader_id to HTTP URL
 	portMap := map[string]string{
 		"node1": "8081",
 		"node2": "8082",
@@ -442,7 +414,6 @@ func (s *HTTPServer) proxyToLeader(w http.ResponseWriter, r *http.Request, op, k
 		"node5": "8085",
 	}
 
-	// Try container internal URL first, then fallback to host URL
 	targetURLs := []string{
 		fmt.Sprintf("http://%s:8080/%s", leaderID, strings.ToLower(op)),
 		fmt.Sprintf("http://localhost:%s/%s", portMap[string(leaderID)], strings.ToLower(op)),
@@ -483,89 +454,6 @@ func (s *HTTPServer) proxyToLeader(w http.ResponseWriter, r *http.Request, op, k
 	})
 }
 
-// handleNodeAction mengeksekusi kontrol kontainer (stop/start) via podman/docker dari backend Go.
-func (s *HTTPServer) handleNodeAction(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	var req struct {
-		NodeID string `json:"node_id"`
-		Action string `json:"action"` // "stop", "start", atau "restart"
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" || req.Action == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "node_id dan action wajib diisi"})
-		return
-	}
-
-	action := strings.ToLower(req.Action)
-	if action != "stop" && action != "start" && action != "restart" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "action harus 'stop', 'start', atau 'restart'"})
-		return
-	}
-
-	go func() {
-		err := execContainerControl(action, req.NodeID)
-		if err != nil {
-			log.Printf("[NODE ACTION WARN] Eksekusi %s %s gagal: %v", action, req.NodeID, err)
-		} else {
-			log.Printf("[NODE ACTION SUCCESS] %s %s berhasil dijalankan", action, req.NodeID)
-		}
-	}()
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "initiated",
-		"message": fmt.Sprintf("Perintah %s pada %s telah dipicu di latar belakang.", action, req.NodeID),
-		"node_id": req.NodeID,
-		"action":  action,
-	})
-}
-
-// execContainerControl mencoba mengeksekusi perintah container CLI (podman / docker / compose) di host
-func execContainerControl(action, nodeID string) error {
-	possibleTargets := []string{
-		fmt.Sprintf("belajar-raft-consensus_%s_1", nodeID),
-		fmt.Sprintf("belajar-raft-consensus-%s-1", nodeID),
-		nodeID,
-	}
-
-	// Deteksi CLI tool yang tersedia di sistem
-	tools := []string{"podman", "docker", "podman-compose", "docker-compose"}
-	var activeTool string
-	for _, t := range tools {
-		if _, err := exec.LookPath(t); err == nil {
-			activeTool = t
-			break
-		}
-	}
-
-	if activeTool == "" {
-		// Default ke podman jika tidak terdeteksi via LookPath
-		activeTool = "podman"
-	}
-
-	var lastErr error
-	for _, target := range possibleTargets {
-		var cmd *exec.Cmd
-		if strings.Contains(activeTool, "compose") {
-			cmd = exec.Command(activeTool, action, nodeID)
-		} else {
-			cmd = exec.Command(activeTool, action, target)
-		}
-
-		out, err := cmd.CombinedOutput()
-		if err == nil {
-			log.Printf("[EXEC SUCCESS] %s %s %s: %s", activeTool, action, target, strings.TrimSpace(string(out)))
-			return nil
-		}
-		lastErr = fmt.Errorf("%s output: %s", err, string(out))
-	}
-
-	return lastErr
-}
-
-// handleJoin memproses penambahan node baru ke dalam cluster secara dinamis.
 func (s *HTTPServer) handleJoin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -711,7 +599,6 @@ func main() {
 	mux.HandleFunc("/all", srv.handleGetAll)
 	mux.HandleFunc("/set", srv.handleSet)
 	mux.HandleFunc("/delete", srv.handleDelete)
-	mux.HandleFunc("/node-action", srv.handleNodeAction)
 	mux.HandleFunc("/join", srv.handleJoin)
 
 	httpServer := &http.Server{
