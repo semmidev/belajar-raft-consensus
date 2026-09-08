@@ -3,6 +3,7 @@ version: '3.8'
 services:
   node1:
     build: .
+    image: raft-server
     command: ["./raft-server", "-id=node1", "-raft-addr=node1:12000", "-http-addr=:8080", "-bootstrap=true"]
     ports:
       - "8081:8080"
@@ -10,7 +11,7 @@ services:
       - raft-net
 
   node2:
-    build: .
+    image: raft-server
     command: ["./raft-server", "-id=node2", "-raft-addr=node2:12000", "-http-addr=:8080"]
     ports:
       - "8082:8080"
@@ -20,7 +21,7 @@ services:
       - raft-net
 
   node3:
-    build: .
+    image: raft-server
     command: ["./raft-server", "-id=node3", "-raft-addr=node3:12000", "-http-addr=:8080"]
     ports:
       - "8083:8080"
@@ -30,7 +31,7 @@ services:
       - raft-net
 
   node4:
-    build: .
+    image: raft-server
     command: ["./raft-server", "-id=node4", "-raft-addr=node4:12000", "-http-addr=:8080"]
     ports:
       - "8084:8080"
@@ -40,7 +41,7 @@ services:
       - raft-net
 
   node5:
-    build: .
+    image: raft-server
     command: ["./raft-server", "-id=node5", "-raft-addr=node5:12000", "-http-addr=:8080"]
     ports:
       - "8085:8080"
