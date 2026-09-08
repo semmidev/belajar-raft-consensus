@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Raft Consensus Dashboard</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              100: '#d1fae5',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-card {
+      background: rgba(30, 41, 59, 0.6);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .glow-emerald {
+      box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.25);
+    }
+    .glow-amber {
+      box-shadow: 0 0 25px -5px rgba(245, 158, 11, 0.25);
+    }
+    .glow-rose {
+      box-shadow: 0 0 25px -5px rgba(244, 63, 94, 0.25);
+    }
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(51, 65, 85, 0.8);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(71, 85, 105, 1);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-emerald-500 selection:text-slate-950">
+
+  <!-- TOP HEADER / NAVBAR -->
+  <header class="sticky top-0 z-50 glass-panel border-b border-slate-800/80 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-slate-950 shadow-lg shadow-emerald-500/20">
+          <i data-lucide="layers" class="w-6 h-6 stroke-[2.5]"></i>
+          <span class="absolute -top-1 -right-1 flex h-3 w-3">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+          </span>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+              Raft Consensus Cluster
+            </h1>
+            <span class="px-2 py-0.5 text-xs font-mono font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              v1.0.0
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+            <span>Node Aktif: <strong id="header-node-id" class="text-emerald-400 font-mono">{{.NodeID}}</strong></span>
+            <span>•</span>
+            <span id="header-cluster-status" class="flex items-center gap-1 text-emerald-400">
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span> Cluster Sehat
+            </span>
+          </p>
+        </div>
+      </div>
+
+      <!-- QUICK CLUSTER SUMMARY STATS -->
+      <div class="flex items-center gap-3">
+        <div class="glass-card px-3.5 py-2 rounded-xl flex items-center gap-3">
+          <div class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+            <i data-lucide="crown" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Leader Saat Ini</div>
+            <div id="stat-leader-id" class="text-sm font-bold font-mono text-emerald-400">Memuat...</div>
+          </div>
+        </div>
+
+        <div class="glass-card px-3.5 py-2 rounded-xl flex items-center gap-3">
+          <div class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400">
+            <i data-lucide="shield" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Current Term</div>
+            <div id="stat-term" class="text-sm font-bold font-mono text-indigo-300">-</div>
+          </div>
+        </div>
+
+        <div class="glass-card px-3.5 py-2 rounded-xl flex items-center gap-3">
+          <div class="p-2 rounded-lg bg-amber-500/10 text-amber-400">
+            <i data-lucide="database" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Total Key-Value</div>
+            <div id="stat-total-keys" class="text-sm font-bold font-mono text-amber-300">0</div>
+          </div>
+        </div>
+
+        <!-- QUICK FAILOVER BUTTON -->
+        <button onclick="triggerLeaderFailover()" title="Matikan Leader untuk simulasi pemilihan Leader baru" class="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-medium text-xs transition-all active:scale-95 shadow-lg shadow-rose-950/40">
+          <i data-lucide="zap" class="w-4 h-4 text-rose-400"></i>
+          <span class="hidden sm:inline">Simulasi Crash Leader</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto w-full px-6 py-8 space-y-8 flex-1">
+
+    <!-- SECTION 1: CLUSTER NODE TOPOLOGY CARDS -->
+    <section class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+            <i data-lucide="server" class="w-5 h-5 text-emerald-400"></i>
+            Topologi Node Cluster (5 Node Raft)
+          </h2>
+          <p class="text-xs text-slate-400">Status real-time, peran Raft konsensus, serta opsi kontrol kontainer</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="fetchClusterStatus()" class="p-2 rounded-lg glass-card hover:bg-slate-800 text-slate-300 transition text-xs flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh Status
+          </button>
+        </div>
+      </div>
+
+      <!-- GRID 5 NODES -->
+      <div id="nodes-grid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <!-- Rendered via JavaScript -->
+        <div class="col-span-full py-12 text-center text-slate-500 glass-card rounded-2xl">
+          <i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto mb-2 text-emerald-400"></i>
+          Menghubungkan ke cluster node...
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: KEY-VALUE OPERATIONS & EXPLORER -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+      <!-- LEFT: SET / GET INTERACTIVE FORM (5 Cols) -->
+      <div class="lg:col-span-5 space-y-6">
+        
+        <!-- CARD: SET DATA FORM -->
+        <div class="glass-panel p-6 rounded-2xl space-y-4 relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
+          
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 class="font-bold text-slate-100 flex items-center gap-2 text-base">
+              <i data-lucide="plus-circle" class="w-4 h-4 text-emerald-400"></i>
+              Tulis Data (SET Key-Value)
+            </h3>
+            <span class="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded bg-slate-800">Must go to Leader</span>
+          </div>
+
+          <form id="form-set" onsubmit="handleSet(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">Key (Kunci)</label>
+              <div class="relative">
+                <input type="text" id="input-key" required placeholder="Contoh: framework, database, user_123" class="w-full bg-slate-900/90 border border-slate-700/80 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3.5 py-2.5 text-sm font-mono text-slate-100 placeholder-slate-600 transition outline-none">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">Value (Nilai)</label>
+              <textarea id="input-value" required rows="3" placeholder="Contoh: beego, postgresql, active" class="w-full bg-slate-900/90 border border-slate-700/80 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3.5 py-2.5 text-sm font-mono text-slate-100 placeholder-slate-600 transition outline-none resize-none"></textarea>
+            </div>
+
+            <button type="submit" id="btn-set" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-semibold text-sm shadow-lg shadow-emerald-950/50 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
+              <i data-lucide="send" class="w-4 h-4"></i>
+              Kirim ke Cluster (SET)
+            </button>
+          </form>
+
+          <!-- ALERT / STATUS TOAST INSIDE FORM -->
+          <div id="set-result" class="hidden p-3.5 rounded-xl text-xs font-mono space-y-1 transition"></div>
+        </div>
+
+        <!-- CARD: QUICK GET LOOKUP -->
+        <div class="glass-panel p-6 rounded-2xl space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 class="font-bold text-slate-100 flex items-center gap-2 text-base">
+              <i data-lucide="search" class="w-4 h-4 text-indigo-400"></i>
+              Cari Data (GET Key)
+            </h3>
+            <span class="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded bg-slate-800">Any Node / Leader</span>
+          </div>
+
+          <form id="form-get" onsubmit="handleGet(event)" class="flex gap-2">
+            <input type="text" id="input-get-key" required placeholder="Ketik Key..." class="flex-1 bg-slate-900/90 border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3.5 py-2 text-sm font-mono text-slate-100 placeholder-slate-600 outline-none">
+            <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition flex items-center gap-1.5 shadow-lg shadow-indigo-950/50">
+              <i data-lucide="search" class="w-3.5 h-3.5"></i> GET
+            </button>
+          </form>
+
+          <div id="get-result" class="hidden p-3.5 rounded-xl text-xs font-mono bg-slate-900/80 border border-slate-800"></div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT: LIVE KEY-VALUE STORE EXPLORER (7 Cols) -->
+      <div class="lg:col-span-7 space-y-6">
+        
+        <div class="glass-panel p-6 rounded-2xl space-y-4 min-h-[460px] flex flex-col">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div>
+              <h3 class="font-bold text-slate-100 flex items-center gap-2 text-base">
+                <i data-lucide="table" class="w-4 h-4 text-amber-400"></i>
+                Penyimpanan Data FSM Lokal & Cluster
+              </h3>
+              <p class="text-xs text-slate-400">Daftar entri key-value yang tersinkronisasi di memori FSM</p>
+            </div>
+            
+            <div class="flex items-center gap-2">
+              <div class="relative">
+                <i data-lucide="filter" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                <input type="text" id="filter-table" oninput="renderKVTable()" placeholder="Filter Key..." class="bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs font-mono text-slate-200 outline-none focus:border-amber-500/50 w-36">
+              </div>
+              <button onclick="fetchKVData()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition" title="Refresh Data">
+                <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- TABLE -->
+          <div class="overflow-x-auto flex-1 border border-slate-800/80 rounded-xl bg-slate-900/50">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-900/90 text-slate-400 font-semibold border-b border-slate-800 uppercase tracking-wider text-[10px]">
+                <tr>
+                  <th class="px-4 py-3">Key (Kunci)</th>
+                  <th class="px-4 py-3">Value (Nilai)</th>
+                  <th class="px-4 py-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="kv-table-body" class="divide-y divide-slate-800/60 font-mono">
+                <!-- Rendered via JS -->
+                <tr>
+                  <td colspan="3" class="px-4 py-8 text-center text-slate-500 italic">Belum ada data disepakati di FSM.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="flex items-center justify-between text-xs text-slate-500 pt-2 font-mono">
+            <span>Total: <strong id="kv-count" class="text-slate-300">0</strong> entri</span>
+            <span class="flex items-center gap-1"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-400"></i> Replicated via Raft Consensus</span>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- SECTION 3: LIVE EVENT CONSOLE LOG -->
+    <section class="glass-panel p-6 rounded-2xl space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-slate-100 flex items-center gap-2 text-sm">
+          <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i>
+          Console Log Aktivitas Cluster
+        </h3>
+        <button onclick="clearConsoleLog()" class="text-xs text-slate-400 hover:text-slate-200 transition flex items-center gap-1">
+          <i data-lucide="trash-2" class="w-3 h-3"></i> Bersihkan Log
+        </button>
+      </div>
+      <div id="event-log" class="bg-slate-950/90 rounded-xl p-4 h-36 overflow-y-auto font-mono text-xs space-y-1.5 border border-slate-800/90 text-slate-300">
+        <div class="text-slate-500 italic">[SYSTEM] Dashboard diinisialisasi. Menghubungkan ke Node Raft {{.NodeID}}...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+      <p>Raft Consensus Implementation in Go • Node ID: <span class="font-mono text-slate-400">{{.NodeID}}</span></p>
+      <p class="flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span> Standar Hashicorp Raft Protocol
+      </p>
+    </div>
+  </footer>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    // State global
+    let currentLeaderID = "";
+    let currentLeaderAddr = "";
+    let kvData = {};
+    let clusterNodes = [
+      { id: "node1", httpPort: 8081, raftAddr: "node1:12000" },
+      { id: "node2", httpPort: 8082, raftAddr: "node2:12000" },
+      { id: "node3", httpPort: 8083, raftAddr: "node3:12000" },
+      { id: "node4", httpPort: 8084, raftAddr: "node4:12000" },
+      { id: "node5", httpPort: 8085, raftAddr: "node5:12000" },
+    ];
+    let nodesStateMap = {};
+
+    document.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+      fetchClusterStatus();
+      fetchKVData();
+      setInterval(fetchClusterStatus, 2000);
+      setInterval(fetchKVData, 3000);
+    });
+
+    function logConsole(message, type = "info") {
+      const logContainer = document.getElementById("event-log");
+      const timeStr = new Date().toLocaleTimeString();
+      let colorClass = "text-slate-300";
+      if (type === "success") colorClass = "text-emerald-400 font-semibold";
+      if (type === "warn") colorClass = "text-amber-400";
+      if (type === "error") colorClass = "text-rose-400 font-semibold";
+
+      const entry = document.createElement("div");
+      entry.className = `${colorClass} flex items-start gap-2`;
+      entry.innerHTML = `<span class="text-slate-600 font-mono text-[11px] select-none">[${timeStr}]</span> <span>${message}</span>`;
+      
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function clearConsoleLog() {
+      document.getElementById("event-log").innerHTML = `<div class="text-slate-500 italic">[SYSTEM] Log dibersihkan.</div>`;
+    }
+
+    // Fetch Cluster Status from local node /cluster-status endpoint
+    async function fetchClusterStatus() {
+      try {
+        const res = await fetch("/cluster-status");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        
+        nodesStateMap = data.nodes || {};
+        currentLeaderID = data.leader_id || "-";
+        currentLeaderAddr = data.leader_addr || "-";
+
+        document.getElementById("stat-leader-id").innerText = currentLeaderID || "Mencari Leader...";
+        document.getElementById("stat-term").innerText = data.current_term || "-";
+
+        renderNodesGrid();
+      } catch (err) {
+        logConsole(`Gagal mengambil status cluster: ${err.message}`, "error");
+      }
+    }
+
+    // Render Grid Cards for 5 Nodes
+    function renderNodesGrid() {
+      const grid = document.getElementById("nodes-grid");
+      let html = "";
+
+      clusterNodes.forEach((n) => {
+        const info = nodesStateMap[n.id] || { state: "Offline", is_alive: false };
+        const isAlive = info.is_alive;
+        const state = info.state || "Offline";
+        const isLeader = state === "Leader";
+
+        let borderGlow = "border-slate-800";
+        let badgeBg = "bg-slate-800 text-slate-400 border-slate-700";
+        let statusDot = "bg-slate-500";
+
+        if (!isAlive) {
+          borderGlow = "border-rose-500/40 glow-rose bg-rose-950/10";
+          badgeBg = "bg-rose-500/20 text-rose-300 border-rose-500/30";
+          statusDot = "bg-rose-500";
+        } else if (isLeader) {
+          borderGlow = "border-emerald-500/60 glow-emerald bg-emerald-950/10";
+          badgeBg = "bg-emerald-500/20 text-emerald-300 border-emerald-500/40";
+          statusDot = "bg-emerald-400 animate-pulse";
+        } else if (state === "Follower") {
+          borderGlow = "border-indigo-500/30 bg-slate-900/80";
+          badgeBg = "bg-indigo-500/20 text-indigo-300 border-indigo-500/30";
+          statusDot = "bg-indigo-400";
+        } else if (state === "Candidate") {
+          borderGlow = "border-amber-500/50 glow-amber bg-amber-950/10";
+          badgeBg = "bg-amber-500/20 text-amber-300 border-amber-500/40";
+          statusDot = "bg-amber-400 animate-ping";
+        }
+
+        html += `
+          <div class="glass-card rounded-2xl p-4 border ${borderGlow} flex flex-col justify-between space-y-4 transition-all duration-300 hover:scale-[1.02]">
+            <div>
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full ${statusDot}"></span>
+                  <span class="font-bold text-sm font-mono text-slate-100">${n.id}</span>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold uppercase tracking-wide border ${badgeBg}">
+                  ${isLeader ? "👑 LEADER" : state}
+                </span>
+              </div>
+
+              <div class="space-y-1.5 text-[11px] font-mono text-slate-400 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Raft Addr:</span>
+                  <span class="text-slate-300">${n.raftAddr}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">HTTP Port:</span>
+                  <span class="text-slate-300">:${n.httpPort}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Applied Idx:</span>
+                  <span class="text-emerald-400 font-bold">${info.applied_index !== undefined ? info.applied_index : "-"}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Commit Idx:</span>
+                  <span class="text-indigo-300 font-bold">${info.commit_index !== undefined ? info.commit_index : "-"}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- ACTION BUTTON (STOP / START CONTAINER) -->
+            <div class="pt-1">
+              ${isAlive ? `
+                <button onclick="controlNodeContainer('${n.id}', 'stop')" class="w-full py-1.5 px-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[11px] font-medium transition flex items-center justify-center gap-1.5 active:scale-95">
+                  <i data-lucide="power" class="w-3 h-3"></i> Stop Node
+                </button>
+              ` : `
+                <button onclick="controlNodeContainer('${n.id}', 'start')" class="w-full py-1.5 px-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] font-medium transition flex items-center justify-center gap-1.5 active:scale-95">
+                  <i data-lucide="play" class="w-3 h-3"></i> Start Node
+                </button>
+              `}
+            </div>
+          </div>
+        `;
+      });
+
+      grid.innerHTML = html;
+      lucide.createIcons();
+    }
+
+    // Fetch all KV entries from FSM
+    async function fetchKVData() {
+      try {
+        const res = await fetch("/all");
+        if (!res.ok) return;
+        kvData = await res.json();
+        renderKVTable();
+      } catch (err) {
+        console.error("Gagal load KV data:", err);
+      }
+    }
+
+    // Render KV Table
+    function renderKVTable() {
+      const tbody = document.getElementById("kv-table-body");
+      const filter = document.getElementById("filter-table").value.toLowerCase();
+      const keys = Object.keys(kvData || {}).filter(k => k.toLowerCase().includes(filter));
+
+      document.getElementById("kv-count").innerText = keys.length;
+      document.getElementById("stat-total-keys").innerText = Object.keys(kvData || {}).length;
+
+      if (keys.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="3" class="px-4 py-8 text-center text-slate-500 italic">
+              ${filter ? "Tidak ada key yang cocok dengan filter." : "Belum ada data tersimpan."}
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      let html = "";
+      keys.forEach(k => {
+        const val = kvData[k];
+        html += `
+          <tr class="hover:bg-slate-800/40 transition">
+            <td class="px-4 py-3 font-semibold text-emerald-400">${escapeHtml(k)}</td>
+            <td class="px-4 py-3 text-slate-200 max-w-xs truncate">${escapeHtml(val)}</td>
+            <td class="px-4 py-3 text-right">
+              <button onclick="handleDelete('${escapeHtml(k)}')" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition" title="Hapus Key via Konsensus">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = html;
+      lucide.createIcons();
+    }
+
+    // Handle SET Submit
+    async function handleSet(e) {
+      e.preventDefault();
+      const key = document.getElementById("input-key").value.trim();
+      const value = document.getElementById("input-value").value.trim();
+      const btn = document.getElementById("btn-set");
+      const resultBox = document.getElementById("set-result");
+
+      if (!key || !value) return;
+
+      btn.disabled = true;
+      btn.classList.add("opacity-60");
+      resultBox.className = "p-3.5 rounded-xl text-xs font-mono bg-slate-900 border border-slate-800 text-slate-300";
+      resultBox.innerHTML = `Mengirim perintah SET ke Leader (${currentLeaderID || "Auto"})...`;
+      resultBox.classList.remove("hidden");
+
+      try {
+        const res = await fetch("/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, value })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          resultBox.className = "p-3.5 rounded-xl text-xs font-mono bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 space-y-1";
+          resultBox.innerHTML = `
+            <div class="font-bold flex items-center gap-1.5"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i> Success (Index #${data.index})</div>
+            <div class="text-[11px] text-slate-400">Key '${key}' berhasil disepakati & direplikasi ke seluruh Follower.</div>
+          `;
+          logConsole(`[SET SUCCESS] Key '${key}' = '${value}' disepakati di log index #${data.index}`, "success");
+          document.getElementById("input-key").value = "";
+          document.getElementById("input-value").value = "";
+          fetchKVData();
+          fetchClusterStatus();
+        } else {
+          resultBox.className = "p-3.5 rounded-xl text-xs font-mono bg-rose-950/40 border border-rose-500/30 text-rose-300 space-y-1";
+          resultBox.innerHTML = `
+            <div class="font-bold flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-4 h-4 text-rose-400"></i> Gagal Memproses</div>
+            <div class="text-[11px] text-slate-400">${data.message || data.error || "Gagal"}</div>
+          `;
+          logConsole(`[SET REJECTED] ${data.message || data.error}`, "warn");
+        }
+      } catch (err) {
+        resultBox.className = "p-3.5 rounded-xl text-xs font-mono bg-rose-950/40 border border-rose-500/30 text-rose-300";
+        resultBox.innerText = `Error: ${err.message}`;
+        logConsole(`[SET ERROR] ${err.message}`, "error");
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("opacity-60");
+        lucide.createIcons();
+      }
+    }
+
+    // Handle GET Submit
+    async function handleGet(e) {
+      e.preventDefault();
+      const key = document.getElementById("input-get-key").value.trim();
+      const resultBox = document.getElementById("get-result");
+      if (!key) return;
+
+      try {
+        const res = await fetch(`/get?key=${encodeURIComponent(key)}`);
+        const data = await res.json();
+        resultBox.classList.remove("hidden");
+
+        if (res.ok) {
+          resultBox.innerHTML = `
+            <div class="text-emerald-400 font-bold mb-0.5">Ditemukan!</div>
+            <div><span class="text-slate-500">Key:</span> ${escapeHtml(data.key)}</div>
+            <div><span class="text-slate-500">Value:</span> <span class="text-slate-100 font-semibold">${escapeHtml(data.value)}</span></div>
+          `;
+          logConsole(`[GET] key='${key}' -> value='${data.value}'`, "info");
+        } else {
+          resultBox.innerHTML = `<span class="text-rose-400 font-semibold">Key '${escapeHtml(key)}' tidak ditemukan di FSM.</span>`;
+          logConsole(`[GET] key='${key}' tidak ditemukan`, "warn");
+        }
+      } catch (err) {
+        resultBox.classList.remove("hidden");
+        resultBox.innerHTML = `<span class="text-rose-400">Error: ${err.message}</span>`;
+      }
+    }
+
+    // Handle DELETE Key
+    async function handleDelete(key) {
+      if (!confirm(`Hapus key '${key}' via Raft consensus?`)) return;
+
+      try {
+        const res = await fetch(`/delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key })
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          logConsole(`[DELETE SUCCESS] Key '${key}' dihapus di log index #${data.index}`, "success");
+          fetchKVData();
+        } else {
+          alert(`Gagal hapus: ${data.message || data.error}`);
+          logConsole(`[DELETE FAILED] ${data.message || data.error}`, "error");
+        }
+      } catch (err) {
+        logConsole(`[DELETE ERROR] ${err.message}`, "error");
+      }
+    }
+
+    // Control Container (Stop / Start Node)
+    async function controlNodeContainer(nodeID, action) {
+      logConsole(`Mengirim sinyal ${action.toUpperCase()} ke kontainer ${nodeID}...`, "warn");
+
+      try {
+        const res = await fetch("/node-action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ node_id: nodeID, action: action })
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          logConsole(`[CONTAINER ACTION] ${action.toUpperCase()} ${nodeID} sukses: ${data.message}`, "success");
+        } else {
+          logConsole(`[CONTAINER ACTION WARNING] ${data.message || data.error}`, "warn");
+        }
+      } catch (err) {
+        logConsole(`[CONTAINER ACTION ERROR] ${err.message}`, "error");
+      } finally {
+        setTimeout(fetchClusterStatus, 1000);
+      }
+    }
+
+    // Trigger Leader Failover
+    function triggerLeaderFailover() {
+      if (!currentLeaderID || currentLeaderID === "-") {
+        alert("Leader belum terdeteksi di cluster!");
+        return;
+      }
+      if (confirm(`Matikan Leader (${currentLeaderID}) untuk menguji pemilihan Leader baru secara otomatis?`)) {
+        controlNodeContainer(currentLeaderID, "stop");
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>
