@@ -29,6 +29,26 @@ services:
     networks:
       - raft-net
 
+  node4:
+    build: .
+    command: ["./raft-server", "-id=node4", "-raft-addr=node4:12000", "-http-addr=:8080"]
+    ports:
+      - "8084:8080"
+    depends_on:
+      - node1
+    networks:
+      - raft-net
+
+  node5:
+    build: .
+    command: ["./raft-server", "-id=node5", "-raft-addr=node5:12000", "-http-addr=:8080"]
+    ports:
+      - "8085:8080"
+    depends_on:
+      - node1
+    networks:
+      - raft-net
+
 networks:
   raft-net:
     driver: bridge

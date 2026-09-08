@@ -1,6 +1,6 @@
 # Distributed Key-Value Store dengan Raft Consensus (Go + Docker Compose)
 
-Repositori ini berisi implementasi *distributed replicated key-value store* menggunakan algoritma konsensus **Raft** via pustaka `hashicorp/raft` di bahasa pemrograman Go, yang dijalankan di atas multi-kontainer Docker Compose.
+Repositori ini berisi implementasi *distributed replicated key-value store* menggunakan algoritma konsensus **Raft** via pustaka `hashicorp/raft` di bahasa pemrograman Go, yang dijalankan di atas **5-Node Cluster** Docker Compose (Skala Menengah - Besar).
 
 ---
 
@@ -19,187 +19,124 @@ Setiap node dalam cluster selalu berada di salah satu dari tiga status:
 * Raft menggunakan **Term**, yaitu bilangan bulat yang selalu bertambah (*monotonically increasing*: 1, 2, 3, ...).
 * Term berfungsi sebagai jam logis (*logical clock*) untuk menentukan keabsahan dan urutan kronologis. Node dengan nomor Term yang lebih tinggi selalu memiliki otoritas lebih sah dibanding node dengan Term yang lebih rendah (*stale*).
 
-### C. Mekanisme Kuorum & Voting
-* Agar sebuah keputusan sah (memilih leader baru atau meng-*commit* data log), keputusan tersebut wajib disetujui oleh **mayoritas sederhana**:
-  $$\text{Quorum} = \lfloor N/2 \rfloor + 1$$
-  *(Contoh: Cluster 3 node membutuhkan minimal 2 persetujuan; Cluster 5 node membutuhkan minimal 3).*
-* Setiap server hanya memiliki hak **1 suara per Term** (*first-come, first-served*).
-* **Tally**: Istilah dalam log Raft yang merepresentasikan akumulasi atau hitungan berjalan dari perolehan suara (*vote count*) yang terkumpul selama pemungutan suara berlangsung. Jika nilai `tally` telah mencapai batas `needed` (kuorum), kandidat langsung dideklarasikan menang (`election won`).
+---
+
+## 2. Penjelasan Mendalam: Mengapa Harus Jumlah Ganjil?
+
+### A. Konsep Kuorum Mayoritas Mutlak
+
+Di Raft, tidak ada satu node pun yang boleh membuat keputusan sepihak. Keputusan pemilihan Leader atau penulisan data **wajib disetujui oleh mayoritas mutlak (> 50%)**.
+
+$$\text{Quorum} = \left\lfloor \frac{N}{2} \right\rfloor + 1$$
 
 ---
 
-## 2. Struktur Proyek
+### B. Perbandingan Langsung: Cluster 3 Node vs 4 Node
+
+Perhatikan tabel perbandingan di bawah ini untuk memahami mengapa menambah node dari 3 menjadi 4 **tidak berguna bagi toleransi kegagalan**:
+
+| Parameter | Cluster 3 Node (Ganjil) | Cluster 4 Node (Genap) |
+| :--- | :--- | :--- |
+| **Total Node ($N$)** | **3** | **4** |
+| **Kuorum Mayoritas Mutlak** | $\lfloor 3/2 \rfloor + 1 = \mathbf{2 \text{ Node}}$ | $\lfloor 4/2 \rfloor + 1 = \mathbf{3 \text{ Node}}$ |
+| **Maksimal Node Boleh Mati ($F$)** | $3 - 2 = \mathbf{1 \text{ Node}}$ | $4 - 3 = \mathbf{1 \text{ Node}}$ |
+| **Jika 1 Node Mati** | Sisa 2 node $\rightarrow$ Masih capai kuorum (2 $\ge$ 2) $\rightarrow$ **SELAMAT** | Sisa 3 node $\rightarrow$ Masih capai kuorum (3 $\ge$ 3) $\rightarrow$ **SELAMAT** |
+| **Jika 2 Node Mati** | Sisa 1 node $\rightarrow$ Gagal kuorum (1 < 2) $\rightarrow$ **LUMPUH** | Sisa 2 node $\rightarrow$ Gagal kuorum (2 < 3) $\rightarrow$ **LUMPUH** |
+
+> [!IMPORTANT]
+> **Kesimpulan Kritis**:
+> Baik Cluster 3 Node maupun 4 Node **SAMA-SAMA HANYA MENTOLERANSI 1 NODE MATI**!
+> Menambahkan node ke-4 **tidak menambah daya tahan cluster**, tetapi justru:
+> 1. Membuang biaya 1 server tambahan.
+> 2. Menambah overhead latensi jaringan RPC.
+> 3. Meningkatkan peluang kerusakan hardware (karena jumlah server bertambah).
+
+---
+
+### C. Bahaya *Network Partition* (Keterbelahan Jaringan) pada Jumlah Genap
+
+Misalkan terjadi kebocoran/pemutusan jaringan yang membelah cluster menjadi dua bagian sama besar:
+
+#### Skenario Cluster 4 Node (Split 2 vs 2):
+- **Sisi Kiri**: Node 1, Node 2 (2 Node)
+- **Sisi Kanan**: Node 3, Node 4 (2 Node)
+- Kuorum yang dibutuhkan = **3 Node**.
+- Sisi Kiri hanya ada 2 node (2 < 3) $\rightarrow$ **Tidak bisa pilih Leader**.
+- Sisi Kanan hanya ada 2 node (2 < 3) $\rightarrow$ **Tidak bisa pilih Leader**.
+- **Hasil**: **CLUSTER MATI TOTAL (*Outage*)** meskipun seluruh 4 node dalam kondisi hidup sehat!
+
+#### Skenario Cluster 5 Node (Split 3 vs 2):
+- **Sisi Kiri**: Node 1, Node 2, Node 3 (3 Node)
+- **Sisi Kanan**: Node 4, Node 5 (2 Node)
+- Kuorum yang dibutuhkan = **3 Node**.
+- Sisi Kiri memiliki 3 node (3 $\ge$ 3) $\rightarrow$ **BERHASIL memilih Leader & Aplikasi Tetap Normal!**
+- Sisi Kanan hanya ada 2 node (2 < 3) $\rightarrow$ Menolak transaksi secara aman.
+- **Hasil**: **SISTEM TETAP HIDUP**.
+
+---
+
+### D. Tabel Ringkasan Fault Tolerance
+
+| Total Node ($N$) | Kuorum Mayoritas | Maksimal Node Mati ($F$) | Persentase Toleransi | Evaluasi Rekomendasi |
+| :---: | :---: | :---: | :---: | :--- |
+| **1** | 1 | **0** | 0% | *Single Point of Failure*. |
+| **2** | 2 | **0** | 0% | Jika 1 node mati $\rightarrow$ Cluster Lumpuh. |
+| **3** | **2** | **1** | **33.3%** | **Sangat Baik** (Minimum Skala Kecil). |
+| **4** | 3 | **1** | 25% | **Sangat Buruk** (Rugi biaya & rawan split-brain). |
+| **5** | **3** | **2** | **40%** | **Sangat Baik** (Skala Menengah - Besar). |
+| **6** | 4 | **2** | 33.3% | Buruk (Rugi biaya & tidak efisien). |
+| **7** | **4** | **3** | **42.8%** | **Sangat Baik** (Skala Enterprise / High-Availability Tinggi). |
+
+---
+
+## 3. Struktur Proyek
 
 ```text
 .
 ├── Dockerfile
+├── Makefile
 ├── compose.yaml
 ├── go.mod
 ├── go.sum
 ├── main.go
 └── README.md
-
 ```
 
 ---
 
-## 3. Penjelasan Komponen Kode (`main.go`)
+## 4. Port & Pemetaan Service 5-Node Cluster
 
-Implementasi ini memadukan tiga komponen utama:
+Cluster disetup menggunakan 5 kontainer pada `compose.yaml`:
 
-### 1. FSM (Finite State Machine)
-
-Raft bertugas memastikan urutan log sama di semua node, sedangkan apa yang dieksekusi terhadap data log tersebut adalah tanggung jawab FSM.
-
-* **`struct Command`**: Payload data yang diserialisasi ke JSON (`{"op":"SET","key":"...","value":"..."}`).
-* **`Apply(*raft.Log)`**: Fungsi krusial yang dipanggil secara otomatis oleh engine Raft saat sebuah log transaksi berhasil mendapatkan kuorum (*committed*). Di sinilah perubahan nilai disimpan ke dalam map in-memory `data[key] = value`.
-* **`Snapshot()` & `Restore()**`: Mekanisme untuk memadatkan riwayat log lama menjadi berkas cadangan agar memori/disk tidak membengkak dan mempercepat sinkronisasi node baru.
-
-### 2. Konfigurasi Timer & Aturan Lease
-
-Konfigurasi waktu diatur secara ketat untuk mencegah anomali *split-brain*:
-
-```go
-config.HeartbeatTimeout = 250 * time.Millisecond
-config.ElectionTimeout = 500 * time.Millisecond
-config.LeaderLeaseTimeout = 250 * time.Millisecond
-
-```
-
-* **`HeartbeatTimeout` (250ms)**: Interval waktu Leader mengirim sinyal kosong secara periodik ke seluruh Follower.
-* **`ElectionTimeout` (500ms)**: Batas waktu tunggu Follower sebelum mendeklarasikan Leader mati dan memulai pemilihan baru.
-* **`LeaderLeaseTimeout` (250ms)**: Durasi hak sewa (*lease*) kepemimpinan. Selama periode ini, Leader boleh melayani operasi baca (*read*) lokal tanpa harus mengecek ulang ke kuorum.
-* **Aturan Kritis**: Pustaka mewajibkan `HeartbeatTimeout >= LeaderLeaseTimeout`. Jika dilanggar, sistem akan mengalami *panic* saat startup demi menjamin Leader lama tidak melayani data usang saat Follower sudah memilih Leader baru.
-
-### 3. REST API Endpoint
-
-* `GET /status`: Mengembalikan metadata node (Role/State, Leader Address saat ini, dan Applied Index).
-* `GET /get?key=<name>`: Membaca nilai langsung dari state in-memory FSM lokal.
-* `POST /set`: Mengirim perintah penulisan. Jika dipanggil pada Follower, request otomatis ditolak dengan kode `307 Temporary Redirect` disertai alamat Leader yang sah.
-
----
-
-## 4. Cara Menjalankan
-
-Jalankan seluruh cluster menggunakan Docker Compose:
-
-```bash
-docker compose up --build
-
-```
-
-Ketiga kontainer akan aktif dengan ekspos port berikut:
-
-* **Node 1 (Bootstrap/Initial Leader)**: HTTP `8081`, Raft TCP `12000`
+* **Node 1 (Initial Leader)**: HTTP `8081`, Raft TCP `12000`
 * **Node 2 (Follower)**: HTTP `8082`, Raft TCP `12000`
 * **Node 3 (Follower)**: HTTP `8083`, Raft TCP `12000`
+* **Node 4 (Follower)**: HTTP `8084`, Raft TCP `12000`
+* **Node 5 (Follower)**: HTTP `8085`, Raft TCP `12000`
 
 ---
 
-## 5. Panduan Pengujian & Simulasi
-
-### Skenario 1: Pemeriksaan Status Cluster
-
-Verifikasi status awal masing-masing node:
+## 5. Cara Menjalankan & Perintah Operasional
 
 ```bash
-curl http://localhost:8081/status
-# Output: {"applied_index":1,"leader_addr":"node1:12000","node_id":"node1","state":"Leader"}
+# Menyalakan seluruh 5 node cluster
+make up
 
-curl http://localhost:8082/status
-# Output: {"applied_index":1,"leader_addr":"node1:12000","node_id":"node2","state":"Follower"}
+# Memeriksa status seluruh 5 node
+make status
 
+# Mengirim request penulisan data ke Leader
+make set KEY=cluster_size VALUE=5_nodes
+
+# Membaca data dari seluruh Follower (Node 2 - Node 5)
+make get KEY=cluster_size
+
+# Simulasi Leader Failover (matikan node1)
+make failover
+
+# Memulihkan node1
+make recover
+
+# Menghentikan cluster
+make down
 ```
-
-### Skenario 2: Penulisan Data & Konsensus Replikasi
-
-1. Tulis data ke **Leader (Node 1)**:
-```bash
-curl -X POST http://localhost:8081/set \
-  -H "Content-Type: application/json" \
-  -d '{"key":"framework","value":"beego"}'
-
-```
-
-
-2. Baca data dari seluruh Follower (Node 2 & Node 3) untuk membuktikan replikasi berhasil:
-```bash
-curl "http://localhost:8082/get?key=framework"
-curl "http://localhost:8083/get?key=framework"
-# Keduanya menghasilkan: {"key":"framework","value":"beego"}
-
-```
-
-
-
-### Skenario 3: Penolakan Penulisan di Node Follower
-
-Kirim request write ke **Node 2 (Follower)**:
-
-```bash
-curl -i -X POST http://localhost:8082/set \
-  -H "Content-Type: application/json" \
-  -d '{"key":"db","value":"postgres"}'
-
-```
-
-Respons akan mengembalikan status redirect:
-
-```text
-HTTP/1.1 307 Temporary Redirect
-Bukan leader. Hubungi leader di: node1:12000
-
-```
-
-### Skenario 4: Simulasi Failover (Leader Crash)
-
-1. Matikan node pemimpin (`node1`):
-```bash
-docker compose stop node1
-
-```
-
-
-2. Amati log transisi pemilihan suara di node yang tersisa:
-```bash
-docker compose logs --tail=20 -f node2 node3
-
-```
-
-
-*Pada log akan terlihat heartbeat timeout habis, salah satu node bertransisi menjadi `Candidate`, mengirim `RequestVote`, memperoleh `tally=2`, dan sah menjadi `Leader` baru.*
-3. Periksa status kepemimpinan baru:
-```bash
-curl http://localhost:8082/status
-curl http://localhost:8083/status
-
-```
-
-
-4. Lakukan penulisan data baru ke Leader baru tersebut:
-```bash
-curl -X POST http://localhost:8082/set \
-  -H "Content-Type: application/json" \
-  -d '{"key":"cluster_state","value":"healthy_after_failover"}'
-
-```
-
-
-
-### Skenario 5: Pemulihan Node Lama (Recovery)
-
-1. Hidupkan kembali `node1`:
-```bash
-docker compose start node1
-
-```
-
-
-2. Periksa status `node1`:
-```bash
-curl http://localhost:8081/status
-
-```
-
-
-Node 1 akan otomatis mendeteksi Term yang lebih tinggi di cluster, turun kasta menjadi **Follower**, dan menyerap log terbaru (`cluster_state`) secara otomatis dari Leader yang sedang menjabat.
